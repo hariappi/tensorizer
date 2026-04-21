@@ -389,7 +389,7 @@ class Constants(type):
                 constant_name.lower(), constant_type
             )
         constant_class = typing.cast(
-            type, NamedTuple(name, **{k: annotations[k] for k in entries})
+            type, NamedTuple(name, [(k, annotations[k]) for k in entries])
         )
         return constant_class(**entries)
 

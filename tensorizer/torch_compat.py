@@ -461,6 +461,25 @@ _suppress_weights_only: ContextVar[bool] = ContextVar(
 )
 
 
+def _torch_load_defaults_to_weights_only() -> bool:
+    default_to_weights_only = getattr(
+        torch.serialization, "_default_to_weights_only", None
+    )
+    if default_to_weights_only is None:
+        return False
+    return default_to_weights_only(None)
+
+
+def _tensorizer_sidecar_available(
+    file_obj: Optional[_wrapper_file_obj_type],
+) -> bool:
+    if file_obj is None:
+        return False
+    if isinstance(file_obj, (str, bytes, os.PathLike)):
+        return os.path.exists(file_obj)
+    return True
+
+
 @functools.wraps(_ORIG_TORCH_SAVE)
 def _save_wrapper(
     obj: object,
@@ -515,6 +534,20 @@ def _load_wrapper(
     with _contextual_torch_filename(f, _tensorizer_loading_filename):
         if _suppress_weights_only.get():
             weights_only = False
+        elif not _tensorizer_sidecar_available(
+            _tensorizer_loading_filename.get()
+        ) and (
+            weights_only is True
+            or (weights_only is None and _torch_load_defaults_to_weights_only())
+        ):
+            return _ORIG_TORCH_LOAD(
+                f,
+                map_location,
+                pickle_module,
+                *args,
+                weights_only=weights_only,
+                **kwargs,
+            )
         return _ORIG_TORCH_LOAD(
             f,
             map_location,

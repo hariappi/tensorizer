@@ -3,6 +3,7 @@ import contextlib
 import inspect
 import io
 import itertools
+import os
 import pickle
 import tempfile
 import threading
@@ -639,12 +640,38 @@ class TestTorchCompat(unittest.TestCase):
         self.assertListEqual(original, loaded)
 
     def test_load_with_regular_file(self):
-        torch.save(self.model, self.pt_path)
+        state_dict = self.model.state_dict()
+        torch.save(state_dict, self.pt_path)
 
         self.assertTrue(self.pt_path.is_file())
         self.assertFalse(self.tensors_path.exists())
 
         with tensorizer_loading():
-            loaded_model = torch.load(self.pt_path)
+            loaded_state_dict = torch.load(self.pt_path)
 
-        self.check_model(loaded_model)
+        for name, original_tensor in state_dict.items():
+            self.assertTrue(torch.equal(original_tensor, loaded_state_dict[name]))
+
+
+class TestTorchCompatSafety(unittest.TestCase):
+    @unittest.skipUnless(
+        torch_compat._torch_load_defaults_to_weights_only(),
+        "torch.load does not default to weights_only=True",
+    )
+    def test_load_with_regular_file_preserves_weights_only_default(self):
+        with tempfile.TemporaryDirectory(prefix="test_torch_compat_safety") as tmp_dir:
+            tmp_dir_path = Path(tmp_dir)
+            pt_path = tmp_dir_path / "test.pt"
+            marker_path = tmp_dir_path / "regular_load_marker"
+
+            class Payload:
+                def __reduce__(self):
+                    return os.system, (f"echo unsafe > {marker_path}",)
+
+            torch.save(Payload(), pt_path)
+
+            with tensorizer_loading():
+                with self.assertRaises(pickle.UnpicklingError):
+                    torch.load(pt_path)
+
+            self.assertFalse(marker_path.exists())
